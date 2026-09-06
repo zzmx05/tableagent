@@ -36,13 +36,39 @@ app.add_middleware(
 
 
 # 请求格式
+class Message(BaseModel):
+    role: str
+    content: str
+
+
+
 class ChatRequest(BaseModel):
+
+    session_id: str
+
     message: str
+
+    history: list[Message] = []
+
+    context: dict = {}
 
 
 # 返回格式
+class AgentState(BaseModel):
+
+    intent: str
+
+    need_tool: bool
+
+
+
 class ChatResponse(BaseModel):
+
+    session_id: str
+
     reply: str
+
+    agent_state: AgentState
 
 
 
@@ -54,32 +80,84 @@ def root():
 
 
 
-@app.post("/chat",
-          response_model=ChatResponse)
+@app.post(
+    "/chat",
+    response_model=ChatResponse
+)
 def chat(req:ChatRequest):
 
-    response = client.chat.completions.create(
-        model="deepseek-chat",
-        messages=[
+
+    messages = [
+
+        {
+            "role":"system",
+            "content":
+            """
+你是一个智能表格分析Agent。
+
+你的职责：
+1. 理解用户的数据分析需求
+2. 给出解释
+3. 判断是否需要调用工具
+
+目前只进行聊天回答。
+            """
+        }
+
+    ]
+
+
+    # 加入历史消息
+    for item in req.history:
+
+        messages.append(
             {
-                "role":"system",
-                "content":
-                """
-                你是一个智能表格分析助手。
-                帮助用户理解、清洗和处理数据。
-                """
-            },
-            {
-                "role":"user",
-                "content":req.message
+                "role":item.role,
+                "content":item.content
             }
-        ]
+        )
+
+
+    # 当前消息
+
+    messages.append(
+        {
+            "role":"user",
+            "content":req.message
+        }
     )
 
 
-    answer = response.choices[0].message.content
+
+    response = client.chat.completions.create(
+
+        model="deepseek-chat",
+
+        messages=messages
+
+    )
+
+
+    answer = (
+        response
+        .choices[0]
+        .message
+        .content
+    )
 
 
     return {
-        "reply":answer
+
+        "session_id":req.session_id,
+
+        "reply":answer,
+
+        "agent_state":{
+
+            "intent":"chat",
+
+            "need_tool":False
+
+        }
+
     }

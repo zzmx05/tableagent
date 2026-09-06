@@ -45,9 +45,12 @@ export function AssistantPanel() {
             headers: {
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({
-              message: inputValue,
-            }),
+            body:JSON.stringify({
+              session_id:"user_001",        
+              message:inputValue,          
+              history:[],          
+              context:{}          
+          }),
           }
         );
 
