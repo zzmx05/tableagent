@@ -25,27 +25,60 @@ export function AssistantPanel() {
     fix: '描述遇到的错误或需要修复的问题...',
   };
 
-  const handleSend = () => {
+  const handleSend = async() => {
     if (!inputValue.trim()) return;
 
     if (inputMode === 'chat') {
-      // 模拟 chat 响应
+      // 用户消息显示
       addMessage({
         type: 'chat',
         content: inputValue,
       });
 
-      setTimeout(() => {
+
+      try {
+
+        const response = await fetch(
+          "http://localhost:8080/chat",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              message: inputValue,
+            }),
+          }
+        );
+
+
+        if (!response.ok) {
+          throw new Error("Backend request failed");
+        }
+
+
+        const data = await response.json();
+
+
         addMessage({
           type: 'chat',
-          content: `基于您的数据集,我发现：\n- 总行数: ${currentProfile?.statistics.totalRows || 0}\n- 空值率最高的列: Name (10%), Email (15%)\n- 建议: 可以使用填充策略处理缺失值`,
-          statistics: {
-            nullColumns: 'Name, Email',
-            topNullRates: { Name: 0.1, Email: 0.15 },
-          },
-          suggestions: ['填充缺失值', '删除包含空值的行', '转换数据类型'],
+          content: data.reply,
         });
-      }, 1000);
+
+
+      } catch(error) {
+
+
+        console.error(error);
+
+
+        addMessage({
+          type:'chat',
+          content:
+            "连接后端失败，请确认 FastAPI 已启动",
+        });
+
+      }
     } else if (inputMode === 'execute') {
       // 生成 execute 方案
       const mockSpec: TableProcessSpec = {
