@@ -2,6 +2,15 @@
 from typing import Any, Callable, Dict
 import pandas as pd
 from tools.table_tools import get_table_statistics, drop_missing_values
+from pathlib import Path
+import os
+
+DATA_ROOT = Path(
+    os.getenv(
+        "TABLE_AGENT_DATA",
+        Path(__file__).resolve().parents[1] / "runtime" / "datasets"
+    )
+)
 
 class ToolRegistry:
     def __init__(self):
@@ -19,19 +28,42 @@ class ToolRegistry:
         return self._handlers[name](arguments or {}, context or {})
 
 def _df(context):
-    data = context.get("data")
-    if data is None: raise ValueError("当前会话没有可供工具分析的表格数据")
-    if isinstance(data, list) and data and isinstance(data[0], list):
-        cols = context.get("columns") or [f"column_{i}" for i in range(len(data[0]))]
-        data = [dict(zip(cols, row)) for row in data]
-    return pd.DataFrame(data)
+    dataset_id = context.get("dataset_id")
+
+    if not dataset_id:
+        raise ValueError(
+            "当前会话没有 dataset_id，无法找到真实表格"
+        )
+
+    dataset_path = DATA_ROOT / f"{dataset_id}.pkl"
+
+    if not dataset_path.exists():
+        raise ValueError(
+            f"找不到数据集: {dataset_id}"
+        )
+
+    return pd.read_pickle(dataset_path)
 
 def _statistics(args, context): return get_table_statistics(_df(context))
 
 def _drop_missing(args, context):
     df = _df(context)
-    new_df, result = drop_missing_values(df, args.get("column"))
-    return {"result": result, "data": new_df.to_dict(orient="records")}
+
+    new_df, result = drop_missing_values(
+        df,
+        args.get("column")
+    )
+
+    dataset_id = context["dataset_id"]
+
+    dataset_path = DATA_ROOT / f"{dataset_id}.pkl"
+
+    new_df.to_pickle(dataset_path)
+
+    return {
+        "result": result,
+        "dataset_id": dataset_id
+    }
 
 def build_registry():
     r = ToolRegistry()

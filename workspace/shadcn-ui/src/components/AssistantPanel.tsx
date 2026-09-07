@@ -50,11 +50,11 @@ export function AssistantPanel() {
               ? `table_${currentDataset.datasetId}`
               : "user_001",
               message: inputValue,
-              context: currentProfile ? {
-                columns: currentProfile.schema.map((c) => c.name),
-                data: currentProfile.previewRows,
-                dataset_id: currentProfile.datasetId,
-              } : {}
+              context: currentProfile
+                ? {
+                    dataset_id: currentProfile.datasetId,
+                  }
+                : {}
           }),
           }
         );

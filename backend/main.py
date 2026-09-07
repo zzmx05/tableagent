@@ -1,8 +1,12 @@
 from __future__ import annotations
-import json, os, uuid
+import json
+import os
+import uuid
+from pathlib import Path
+from io import BytesIO
 from typing import Any, Dict, List
 import pandas as pd
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -10,6 +14,15 @@ from openai import OpenAI
 from agent.memory import memory
 from agent.state import AgentState, ToolCallState
 from agent.tools import registry
+
+DATA_ROOT = Path(
+    os.getenv(
+        "TABLE_AGENT_DATA",
+        Path(__file__).resolve().parent / "runtime" / "datasets"
+    )
+)
+
+DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("DEEPSEEK_API_KEY"), base_url=os.getenv("DEEPSEEK_BASE_URL"))
@@ -102,6 +115,16 @@ def run_agent_turn(session_id: str, user_message: str, context: Dict[str, Any]) 
                 current = memory.load(session_id)
                 result = registry.execute(name, args, current.get("context", {}))
                 result = _jsonable(result)
+                # # Tool 执行成功后，把新的表格状态写回 Memory
+                # if name == "drop_missing_values" and isinstance(result, dict):
+                #     if "data" in result:
+                #         memory.update_context(
+                #             session_id,
+                #             {
+                #                 "data": result["data"]
+                #             }
+                #         )
+
                 call_state.result = result
                 memory.add_tool_result(session_id, {"tool":name,"arguments":args,"result":result})
                 tool_msg = {"role":"tool","tool_call_id":call_id,"name":name,"content":json.dumps(result, ensure_ascii=False, default=str)}
@@ -118,6 +141,134 @@ def run_agent_turn(session_id: str, user_message: str, context: Dict[str, Any]) 
     answer = "本轮工具调用次数过多，已停止执行，请缩小任务范围后重试。"
     memory.append(session_id, {"role":"assistant","content":answer})
     return answer, state
+
+@app.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    encoding: str = Form("UTF-8"),
+    delimiter: str = Form(","),
+    has_header: bool = Form(True),
+):
+    if not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="未选择文件"
+        )
+
+    ext = os.path.splitext(file.filename)[1].lower()
+
+    if ext not in {".csv", ".tsv", ".xlsx", ".xls"}:
+        raise HTTPException(
+            status_code=400,
+            detail="只支持 CSV、TSV、XLSX、XLS 文件"
+        )
+
+    # 生成唯一数据集 ID
+    dataset_id = f"ds_{uuid.uuid4().hex[:12]}"
+
+    # 读取上传文件
+    raw = await file.read()
+
+    try:
+        # Excel
+        if ext in {".xlsx", ".xls"}:
+            df = pd.read_excel(
+                BytesIO(raw)
+            )
+
+        # CSV / TSV
+        else:
+            sep = "\t" if ext == ".tsv" else delimiter
+
+            df = pd.read_csv(
+                BytesIO(raw),
+                encoding=encoding,
+                sep=sep,
+                header=0 if has_header else None,
+            )
+
+            # 没有表头时自动生成列名
+            if not has_header:
+                df.columns = [
+                    f"column_{i}"
+                    for i in range(len(df.columns))
+                ]
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"文件解析失败: {e}"
+        )
+
+    # 保存真实 DataFrame
+    dataset_path = DATA_ROOT / f"{dataset_id}.pkl"
+
+    df.to_pickle(dataset_path)
+
+    # 生成前 50 行预览
+    preview_df = df.head(50)
+    # 转成标准 JSON 数据，NaN / NaT 会自动转换为 null
+    preview = json.loads(
+        preview_df.to_json(
+            orient="values",
+            force_ascii=False
+        )
+    )
+
+    # 生成字段信息
+    schema = []
+
+    for column in df.columns:
+        series = df[column]
+
+        if pd.api.types.is_numeric_dtype(series):
+            column_type = "number"
+        else:
+            column_type = "string"
+
+        schema.append({
+            "name": str(column),
+            "type": column_type,
+            "nullRate": float(series.isna().mean()),
+            "uniqueCount": int(
+                series.nunique(dropna=True)
+            ),
+            "selected": True,
+        })
+
+    # 数据集基本信息
+    meta = {
+        "datasetId": dataset_id,
+        "fileName": file.filename,
+        "fileSize": len(raw),
+        "rows": int(len(df)),
+        "columns": int(len(df.columns)),
+        "encoding": encoding,
+        "delimiter": delimiter,
+        "hasHeader": has_header,
+        "fingerprint": dataset_id,
+        "uploadedAt": pd.Timestamp.now().isoformat(),
+    }
+
+    # 数据画像
+    profile = {
+        "datasetId": dataset_id,
+        "schema": schema,
+        "previewRows": preview,
+        "statistics": {
+            "totalRows": int(len(df)),
+            "totalColumns": int(len(df.columns)),
+            "memoryUsage": int(
+                df.memory_usage(deep=True).sum()
+            ),
+        },
+    }
+
+    return {
+        "datasetId": dataset_id,
+        "meta": meta,
+        "profile": profile,
+    }
 
 @app.get("/")
 def root(): return {"message":"Table Agent Backend Running", "mode":"model_tool_loop"}

@@ -12,7 +12,7 @@ import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Upload, FileText, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { mockUpload } from '@/lib/mockApi';
+// import { mockUpload } from '@/lib/mockApi';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
 export default function UploadPage() {
@@ -38,7 +38,27 @@ export default function UploadPage() {
         setProgress((prev) => Math.min(prev + 10, 90));
       }, 150);
 
-      const result = await mockUpload(file, { encoding, delimiter, hasHeader });
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('encoding', encoding);
+      formData.append('delimiter', delimiter);
+      formData.append('has_header', String(hasHeader));
+
+      const response = await fetch(
+        'http://localhost:8080/upload',
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );      
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);     
+        throw new Error(
+          error?.detail || '文件上传失败'
+        );
+      }
+
+      const result = await response.json();
 
       clearInterval(progressInterval);
       setProgress(100);
