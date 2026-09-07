@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 import os
 
 from openai import OpenAI
+from agent.planner import plan
+from agent.state import AgentState
 
 
 # 加载.env
@@ -40,36 +42,18 @@ class Message(BaseModel):
     role: str
     content: str
 
-
-
 class ChatRequest(BaseModel):
-
     session_id: str
-
     message: str
-
     history: list[Message] = []
-
     context: dict = {}
 
 
 # 返回格式
-class AgentState(BaseModel):
-
-    intent: str
-
-    need_tool: bool
-
-
-
 class ChatResponse(BaseModel):
-
     session_id: str
-
     reply: str
-
     agent_state: AgentState
-
 
 
 @app.get("/")
@@ -85,31 +69,38 @@ def root():
     response_model=ChatResponse
 )
 def chat(req:ChatRequest):
-
+    state = plan(req.message)
 
     messages = [
-
         {
             "role":"system",
             "content":
             """
-你是一个智能表格分析Agent。
+            你是一个智能表格分析Agent。
 
-你的职责：
-1. 理解用户的数据分析需求
-2. 给出解释
-3. 判断是否需要调用工具
+            你的职责：
+            1. 理解用户的数据分析需求
+            2. 给出解释
+            3. 判断是否需要调用工具
 
-目前只进行聊天回答。
+            当前任务状态:
+            意图:
+            {state.intent}
+
+            是否需要工具:
+            {state.need_tool}
+
+            工具:
+            {state.tool_name}
+
+            请根据任务回答用户。
             """
         }
-
     ]
 
 
     # 加入历史消息
     for item in req.history:
-
         messages.append(
             {
                 "role":item.role,
@@ -130,11 +121,8 @@ def chat(req:ChatRequest):
 
 
     response = client.chat.completions.create(
-
         model="deepseek-chat",
-
         messages=messages
-
     )
 
 
@@ -147,17 +135,7 @@ def chat(req:ChatRequest):
 
 
     return {
-
         "session_id":req.session_id,
-
         "reply":answer,
-
-        "agent_state":{
-
-            "intent":"chat",
-
-            "need_tool":False
-
+        "agent_state":state
         }
-
-    }
