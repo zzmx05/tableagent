@@ -1,15 +1,20 @@
 from pydantic import BaseModel
+from typing import Optional
 
 
 class AgentState(BaseModel):
     """
-    Agent当前状态
+    Agent 当前状态。
     """
 
     intent: str
 
     need_tool: bool
 
-    tool_name: str | None = None
+    tool_name: Optional[str] = None
 
-    description: str | None = None
+    description: Optional[str] = None
+
+    tool_result: Optional[dict] = None
+
+    error: Optional[str] = None

@@ -1,73 +1,48 @@
 from agent.state import AgentState
 
 
-
-def plan(user_message:str)->AgentState:
+def plan(user_message: str) -> AgentState:
     """
-    简单规则版Planner
-
-    后续这里替换成LLM Agent Planner
+    根据用户输入判断任务类型，
+    并决定是否需要调用工具。
     """
-
-
     message = user_message.lower()
 
-
-    # 数据清洗
+    # 删除空值
     if (
-        "删除" in message
-        or "清洗" in message
-        or "空值" in message
-        or "缺失" in message
+        "删除空值" in message
+        or "删除缺失值" in message
+        or "去除空值" in message
+        or "去除缺失值" in message
+        or "删除为空" in message
     ):
 
         return AgentState(
-
             intent="data_clean",
-
             need_tool=True,
-
-            tool_name="data_clean",
-
-            description=
-            "用户需要进行数据清洗操作"
-
+            tool_name="drop_missing_values",
+            description="删除表格中的空值记录"
         )
-
 
     # 数据统计
-
-    elif (
+    if (
         "统计" in message
-        or "平均" in message
-        or "数量" in message
+        or "多少行" in message
+        or "多少列" in message
+        or "数据量" in message
+        or "缺失情况" in message
     ):
 
         return AgentState(
-
             intent="data_analysis",
-
             need_tool=True,
-
-            tool_name="statistics",
-
-            description=
-            "用户需要数据统计"
-
+            tool_name="get_table_statistics",
+            description="统计表格基本信息"
         )
-
 
     # 普通聊天
-
-    else:
-
-        return AgentState(
-
-            intent="chat",
-
-            need_tool=False,
-
-            description=
-            "普通对话"
-
-        )
+    return AgentState(
+        intent="chat",
+        need_tool=False,
+        description="普通对话"
+    )
