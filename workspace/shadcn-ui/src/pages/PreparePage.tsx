@@ -15,7 +15,7 @@ import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Play, RotateCcw, AlertCircle, Info } from 'lucide-react';
 import { toast } from 'sonner';
-import { mockProcess, mockGetRun, generateProcessedPreview } from '@/lib/mockApi';
+// import { mockProcess, mockGetRun, generateProcessedPreview } from '@/lib/mockApi';
 import { ColumnSchema } from '@/types/table';
 
 export default function PreparePage() {
@@ -54,52 +54,61 @@ export default function PreparePage() {
 
   const handleRun = async () => {
     if (!currentProfile) return;
-
+  
     setRunning(true);
-    setCurrentRun({
-      runId: 'pending',
-      status: 'pending',
-      progress: 0,
-      inputRows: currentProfile.statistics.totalRows as number,
-      outputRows: 0,
-      affectedColumns: [],
-      missingChanges: [],
-      startedAt: new Date().toISOString(),
-    });
-
+  
     try {
-      const { runId } = await mockProcess(currentProfile.datasetId, processSpec);
-      
-      // 模拟进度更新
+      const response = await fetch(
+        'http://localhost:8080/process',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            dataset_id: currentProfile.datasetId,
+            process_spec: processSpec,
+          }),
+        }
+      );
+  
+      const result = await response.json();
+  
+      if (!response.ok) {
+        throw new Error(
+          result.detail || '数据处理失败'
+        );
+      }
+  
       setCurrentRun({
-        runId,
-        status: 'running',
-        progress: 50,
-        inputRows: currentProfile.statistics.totalRows as number,
-        outputRows: 0,
-        affectedColumns: [],
-        missingChanges: [],
+        runId: result.runId,
+        status: result.status,
+        progress: 100,
+        inputRows: result.inputRows,
+        outputRows: result.outputRows,
+        affectedColumns: result.affectedColumns || [],
+        missingChanges: result.missingChanges || [],
         startedAt: new Date().toISOString(),
       });
-
-      const result = await mockGetRun(runId);
-      setCurrentRun(result);
-
-      if (result.status === 'success') {
-        // 生成处理后的预览
-        const processed = generateProcessedPreview(originalPreview, processSpec, currentProfile.schema);
-        setProcessedPreview(processed);
-        
-        toast.success('运行成功', {
-          description: `输出 ${result.outputRows} 行数据`,
-        });
-      } else if (result.status === 'error') {
-        toast.error('运行失败', {
-          description: result.errorMessage,
-        });
-      }
+  
+      setProcessedPreview(
+        result.profile.previewRows
+      );
+  
+      toast.success('运行成功', {
+        description: `输出 ${result.outputRows} 行数据`,
+      });
+  
     } catch (error) {
-      toast.error('运行失败');
+      console.error('运行失败:', error);
+  
+      toast.error('运行失败', {
+        description:
+          error instanceof Error
+            ? error.message
+            : '未知错误',
+      });
+  
     } finally {
       setRunning(false);
     }

@@ -270,6 +270,123 @@ async def upload_file(
         "profile": profile,
     }
 
+class ProcessRequest(BaseModel):
+    dataset_id: str
+    process_spec: Dict[str, Any] = Field(default_factory=dict)
+
+
+def build_profile_from_df(dataset_id: str, df: pd.DataFrame):
+    preview_df = df.head(50)
+
+    preview = json.loads(
+        preview_df.to_json(
+            orient="values",
+            force_ascii=False
+        )
+    )
+
+    schema = []
+
+    for column in df.columns:
+        series = df[column]
+
+        if pd.api.types.is_numeric_dtype(series):
+            column_type = "number"
+        else:
+            column_type = "string"
+
+        schema.append({
+            "name": str(column),
+            "type": column_type,
+            "nullRate": float(series.isna().mean()),
+            "uniqueCount": int(series.nunique(dropna=True)),
+            "selected": True,
+        })
+
+    return {
+        "datasetId": dataset_id,
+        "schema": schema,
+        "previewRows": preview,
+        "statistics": {
+            "totalRows": int(len(df)),
+            "totalColumns": int(len(df.columns)),
+            "memoryUsage": int(
+                df.memory_usage(deep=True).sum()
+            ),
+        },
+    }
+
+
+@app.post("/process")
+def process_dataset(req: ProcessRequest):
+    dataset_id = req.dataset_id
+
+    dataset_path = DATA_ROOT / f"{dataset_id}.pkl"
+
+    if not dataset_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"找不到数据集: {dataset_id}"
+        )
+
+    df = pd.read_pickle(dataset_path)
+    input_rows = len(df)
+    process_spec = req.process_spec or {}
+
+    # 1. 缺失值处理
+    missing = process_spec.get("missing") or {}
+    strategy = missing.get("strategy")
+
+    if strategy == "drop":
+        column = missing.get("column")
+
+        if column:
+            df = df.dropna(subset=[column])
+        else:
+            df = df.dropna()
+
+    # 2. 列选择
+    selected_columns = process_spec.get("select")
+
+    if selected_columns:
+        existing_columns = [
+            column
+            for column in selected_columns
+            if column in df.columns
+        ]
+
+        df = df[existing_columns]
+
+    # 3. 筛选表达式
+    filter_expression = process_spec.get("filter")
+
+    if filter_expression:
+        try:
+            df = df.query(filter_expression)
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"筛选表达式执行失败: {e}"
+            )
+
+    # 保存处理后的真实 DataFrame
+    df.to_pickle(dataset_path)
+
+    profile = build_profile_from_df(
+        dataset_id,
+        df
+    )
+
+    return {
+        "runId": f"run_{uuid.uuid4().hex[:12]}",
+        "status": "success",
+        "inputRows": int(input_rows),
+        "outputRows": int(len(df)),
+        "affectedColumns": [],
+        "missingChanges": [],
+        "profile": profile,
+    }
+
 @app.get("/")
 def root(): return {"message":"Table Agent Backend Running", "mode":"model_tool_loop"}
 
@@ -286,3 +403,22 @@ def clear_session(session_id: str):
 def chat(req: ChatRequest):
     answer, state = run_agent_turn(req.session_id, req.message, req.context)
     return {"session_id":req.session_id,"reply":answer,"agent_state":state}
+
+@app.get("/datasets/{dataset_id}/preview")
+def get_dataset_preview(dataset_id: str):
+    dataset_path = DATA_ROOT / f"{dataset_id}.pkl"
+
+    if not dataset_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"找不到数据集: {dataset_id}"
+        )
+
+    df = pd.read_pickle(dataset_path)
+
+    profile = build_profile_from_df(
+        dataset_id,
+        df
+    )
+
+    return profile
