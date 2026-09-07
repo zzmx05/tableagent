@@ -14,7 +14,7 @@ import { toast } from 'sonner';
 import { generateProcessedPreview } from '@/lib/mockApi';
 
 export function AssistantPanel() {
-  const { assistantCollapsed, toggleAssistant, messages, addMessage, updateProcessSpec, processSpec, currentProfile, setProcessedPreview } = useTableStore();
+  const { assistantCollapsed, toggleAssistant, messages, addMessage, updateProcessSpec, processSpec, currentProfile, currentDataset, setProcessedPreview } = useTableStore();
   const [inputMode, setInputMode] = useState<MessageType>('chat');
   const [inputValue, setInputValue] = useState('');
   const [messageFilter, setMessageFilter] = useState<MessageType | 'all'>('all');
@@ -46,10 +46,15 @@ export function AssistantPanel() {
               "Content-Type": "application/json",
             },
             body:JSON.stringify({
-              session_id:"user_001",        
-              message:inputValue,          
-              history:[],          
-              context:{}          
+              session_id: currentDataset?.datasetId
+              ? `table_${currentDataset.datasetId}`
+              : "user_001",
+              message: inputValue,
+              context: currentProfile ? {
+                columns: currentProfile.schema.map((c) => c.name),
+                data: currentProfile.previewRows,
+                dataset_id: currentProfile.datasetId,
+              } : {}
           }),
           }
         );
