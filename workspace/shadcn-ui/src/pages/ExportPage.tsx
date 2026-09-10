@@ -10,10 +10,10 @@ import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Download, FileText, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { mockExport } from '@/lib/mockApi';
+import { exportDataset, schemaForPreview } from '@/lib/api';
 
 export default function ExportPage() {
-  const { currentProfile, processSpec, processedPreview, currentDataset, currentRun } = useTableStore();
+  const { currentProfile, processSpec, processedPreview, currentDataset } = useTableStore();
   const [format, setFormat] = useState<'csv' | 'xlsx'>('csv');
   const [encoding, setEncoding] = useState('UTF-8');
   const [delimiter, setDelimiter] = useState(',');
@@ -41,51 +41,23 @@ export default function ExportPage() {
     setExporting(true);
 
     try {
-      const result = await mockExport(currentProfile.datasetId, processSpec, { format, encoding });
+      const result = await exportDataset({
+        datasetId: currentProfile.datasetId,
+        format,
+        encoding,
+        delimiter,
+        nullRepresentation,
+      });
 
-      // 创建导出包
-      const exportPackage = {
-        data: processedPreview,
-        process_spec: processSpec,
-        run_summary: currentRun
-          ? {
-              runId: currentRun.runId,
-              status: currentRun.status,
-              inputRows: currentRun.inputRows,
-              outputRows: currentRun.outputRows,
-              affectedColumns: currentRun.affectedColumns,
-              completedAt: currentRun.completedAt,
-            }
-          : null,
-        dataset_meta: {
-          fileName: currentDataset.fileName,
-          fileSize: currentDataset.fileSize,
-          rows: currentDataset.rows,
-          columns: currentDataset.columns,
-          encoding: currentDataset.encoding,
-          fingerprint: currentDataset.fingerprint,
-        },
-        export_options: {
-          format,
-          encoding,
-          delimiter,
-          dateFormat,
-          nullRepresentation,
-        },
-        exported_at: new Date().toISOString(),
-      };
-
-      // 下载 JSON 文件
-      const blob = new Blob([JSON.stringify(exportPackage, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(result.blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `export_${Date.now()}.json`;
+      a.download = result.fileName;
       a.click();
       URL.revokeObjectURL(url);
 
       toast.success('导出成功', {
-        description: '数据文件和元数据已下载',
+        description: result.fileName,
       });
     } catch (error) {
       toast.error('导出失败');
@@ -179,7 +151,7 @@ export default function ExportPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  {currentProfile.schema.map((col) => (
+                  {schemaForPreview(currentProfile.schema, processSpec).map((col) => (
                     <TableHead key={col.name}>{col.name}</TableHead>
                   ))}
                 </TableRow>

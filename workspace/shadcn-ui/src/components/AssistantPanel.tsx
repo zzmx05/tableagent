@@ -11,10 +11,10 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { MessageType, Message, TableProcessSpec } from '@/types/table';
 import { ChevronLeft, ChevronRight, Send, Copy, Star } from 'lucide-react';
 import { toast } from 'sonner';
-import { generateProcessedPreview } from '@/lib/mockApi';
+import { chatWithAgent, previewFromSpec } from '@/lib/api';
 
 export function AssistantPanel() {
-  const { assistantCollapsed, toggleAssistant, messages, addMessage, updateProcessSpec, processSpec, currentProfile, currentDataset, setProcessedPreview } = useTableStore();
+  const { assistantCollapsed, toggleAssistant, messages, addMessage, updateProcessSpec, processSpec, currentProfile, currentDataset, setProcessedPreview, applyProfile } = useTableStore();
   const [inputMode, setInputMode] = useState<MessageType>('chat');
   const [inputValue, setInputValue] = useState('');
   const [messageFilter, setMessageFilter] = useState<MessageType | 'all'>('all');
@@ -38,40 +38,26 @@ export function AssistantPanel() {
 
       try {
 
-        const response = await fetch(
-          "http://localhost:8080/chat",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body:JSON.stringify({
-              session_id: currentDataset?.datasetId
-              ? `table_${currentDataset.datasetId}`
-              : "user_001",
-              message: inputValue,
-              context: currentProfile
-                ? {
-                    dataset_id: currentProfile.datasetId,
-                  }
-                : {}
-          }),
-          }
-        );
-
-
-        if (!response.ok) {
-          throw new Error("Backend request failed");
-        }
-
-
-        const data = await response.json();
-
+        const data = await chatWithAgent({
+          sessionId: currentDataset?.datasetId
+            ? `table_${currentDataset.datasetId}`
+            : "user_001",
+          message: inputValue,
+          context: currentProfile
+            ? {
+                dataset_id: currentProfile.datasetId,
+              }
+            : {},
+        });
 
         addMessage({
           type: 'chat',
           content: data.reply,
         });
+
+        if (data.profile) {
+          applyProfile(data.profile);
+        }
 
 
       } catch(error) {
@@ -132,12 +118,13 @@ export function AssistantPanel() {
       
       // 生成处理后的预览
       if (currentProfile) {
-        const processed = generateProcessedPreview(
+        const mergedSpec = { ...processSpec, ...message.spec };
+        const processed = previewFromSpec(
           currentProfile.previewRows,
-          { ...processSpec, ...message.spec },
-          currentProfile.schema
+          currentProfile.schema,
+          mergedSpec
         );
-        setProcessedPreview(processed);
+        setProcessedPreview(processed.data);
       }
       
       toast.success('已应用到参数', {

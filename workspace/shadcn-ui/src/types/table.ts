@@ -110,6 +110,7 @@ export interface AppState {
   
   // Preview data
   originalPreview: (string | number | null)[][];
+  originalSchema: ColumnSchema[];
   processedPreview: (string | number | null)[][];
   
   // Messages

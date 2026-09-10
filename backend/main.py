@@ -4,9 +4,10 @@ import os
 import uuid
 from pathlib import Path
 from io import BytesIO
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import pandas as pd
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -55,6 +56,7 @@ class ChatResponse(BaseModel):
     session_id: str
     reply: str
     agent_state: AgentState
+    profile: Optional[Dict[str, Any]] = None
 
 app = FastAPI(title="Table Agent Backend")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -105,7 +107,6 @@ def run_agent_turn(session_id: str, user_message: str, context: Dict[str, Any]) 
             if tool_calls_state:
                 state.tool_name = tool_calls_state[-1].name
                 state.tool_result = tool_calls_state[-1].result
-            memory.append(session_id, {"role":"assistant","content":answer})
             return answer, state
 
         for tc in msg.tool_calls:
@@ -399,10 +400,26 @@ def get_session(session_id: str):
 def clear_session(session_id: str):
     memory.clear(session_id); return {"ok":True,"session_id":session_id}
 
+def _load_profile(dataset_id: str | None):
+    if not dataset_id:
+        return None
+    dataset_path = DATA_ROOT / f"{dataset_id}.pkl"
+    if not dataset_path.exists():
+        return None
+    df = pd.read_pickle(dataset_path)
+    return build_profile_from_df(dataset_id, df)
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     answer, state = run_agent_turn(req.session_id, req.message, req.context)
-    return {"session_id":req.session_id,"reply":answer,"agent_state":state}
+    dataset_id = (req.context or {}).get("dataset_id")
+    return {
+        "session_id": req.session_id,
+        "reply": answer,
+        "agent_state": state,
+        "profile": _load_profile(dataset_id),
+    }
 
 @app.get("/datasets/{dataset_id}/preview")
 def get_dataset_preview(dataset_id: str):
@@ -422,3 +439,47 @@ def get_dataset_preview(dataset_id: str):
     )
 
     return profile
+
+
+class ExportRequest(BaseModel):
+    dataset_id: str
+    format: str = "csv"
+    encoding: str = "UTF-8"
+    delimiter: str = ","
+    null_representation: str = ""
+
+
+@app.post("/export")
+def export_dataset(req: ExportRequest):
+    dataset_path = DATA_ROOT / f"{req.dataset_id}.pkl"
+    if not dataset_path.exists():
+        raise HTTPException(status_code=404, detail=f"找不到数据集: {req.dataset_id}")
+
+    df = pd.read_pickle(dataset_path)
+    if req.null_representation != "":
+        df = df.fillna(req.null_representation)
+
+    fmt = (req.format or "csv").lower()
+    if fmt == "xlsx":
+        buf = BytesIO()
+        df.to_excel(buf, index=False)
+        buf.seek(0)
+        filename = f"{req.dataset_id}.xlsx"
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        return StreamingResponse(
+            buf,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    sep = "\t" if req.delimiter == "\\t" else req.delimiter
+    buf = BytesIO()
+    text = df.to_csv(index=False, sep=sep)
+    buf.write(text.encode(req.encoding, errors="replace"))
+    buf.seek(0)
+    filename = f"{req.dataset_id}.csv"
+    return StreamingResponse(
+        buf,
+        media_type="text/csv; charset=" + req.encoding,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

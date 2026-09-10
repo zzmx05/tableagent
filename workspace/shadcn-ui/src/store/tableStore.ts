@@ -10,6 +10,7 @@ interface TableStore extends AppState {
   addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void;
   setCurrentRun: (run: RunSummary | null) => void;
   setProcessedPreview: (preview: (string | number | null)[][]) => void;
+  applyProfile: (profile: DatasetProfile) => void;
   saveFlow: (flow: Omit<FlowData, 'flowId' | 'createdAt' | 'updatedAt'>) => void;
   loadFlow: (flowId: string) => void;
   deleteFlow: (flowId: string) => void;
@@ -51,6 +52,7 @@ export const useTableStore = create<TableStore>((set, get) => ({
   currentRun: null,
   runHistory: [],
   originalPreview: [],
+  originalSchema: [],
   processedPreview: [],
   messages: [],
   savedFlows: loadFlowsFromStorage(),
@@ -66,6 +68,7 @@ export const useTableStore = create<TableStore>((set, get) => ({
       currentDataset: meta,
       currentProfile: profile,
       originalPreview: profile.previewRows,
+      originalSchema: profile.schema,
       processedPreview: profile.previewRows,
       processSpec: {},
       specHistory: [],
@@ -104,6 +107,21 @@ export const useTableStore = create<TableStore>((set, get) => ({
     set({ processedPreview: preview });
   },
 
+  applyProfile: (profile) => {
+    const current = get().currentDataset;
+    set({
+      currentProfile: profile,
+      processedPreview: profile.previewRows,
+      currentDataset: current
+        ? {
+            ...current,
+            rows: Number(profile.statistics?.totalRows ?? current.rows),
+            columns: Number(profile.statistics?.totalColumns ?? current.columns),
+          }
+        : current,
+    });
+  },
+
   saveFlow: (flow) => {
     const newFlow: FlowData = {
       ...flow,
@@ -123,6 +141,7 @@ export const useTableStore = create<TableStore>((set, get) => ({
         currentDataset: flow.datasetMeta,
         processSpec: flow.spec,
         originalPreview: flow.previewSample || [],
+        originalSchema: [],
         processedPreview: flow.previewSample || [],
         currentTab: 'prepare',
       });
@@ -176,6 +195,7 @@ export const useTableStore = create<TableStore>((set, get) => ({
       specHistory: [],
       currentRun: null,
       originalPreview: [],
+      originalSchema: [],
       processedPreview: [],
     });
   },

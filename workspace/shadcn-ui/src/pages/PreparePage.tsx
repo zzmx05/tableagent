@@ -17,6 +17,7 @@ import { Play, RotateCcw, AlertCircle, Info } from 'lucide-react';
 import { toast } from 'sonner';
 // import { mockProcess, mockGetRun, generateProcessedPreview } from '@/lib/mockApi';
 import { ColumnSchema } from '@/types/table';
+import { processDataset, schemaForPreview } from '@/lib/api';
 
 export default function PreparePage() {
   const {
@@ -26,8 +27,10 @@ export default function PreparePage() {
     currentRun,
     setCurrentRun,
     originalPreview,
+    originalSchema,
     processedPreview,
     setProcessedPreview,
+    applyProfile,
     prepareSubTab,
     setPrepareSubTab,
     showDiffOnly,
@@ -58,28 +61,8 @@ export default function PreparePage() {
     setRunning(true);
   
     try {
-      const response = await fetch(
-        'http://localhost:8080/process',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            dataset_id: currentProfile.datasetId,
-            process_spec: processSpec,
-          }),
-        }
-      );
-  
-      const result = await response.json();
-  
-      if (!response.ok) {
-        throw new Error(
-          result.detail || '数据处理失败'
-        );
-      }
-  
+      const result = await processDataset(currentProfile.datasetId, processSpec);
+
       setCurrentRun({
         runId: result.runId,
         status: result.status,
@@ -90,10 +73,12 @@ export default function PreparePage() {
         missingChanges: result.missingChanges || [],
         startedAt: new Date().toISOString(),
       });
-  
-      setProcessedPreview(
-        result.profile.previewRows
-      );
+
+      if (result.profile) {
+        applyProfile(result.profile);
+      } else {
+        setProcessedPreview(result.profile?.previewRows || []);
+      }
   
       toast.success('运行成功', {
         description: `输出 ${result.outputRows} 行数据`,
@@ -249,11 +234,14 @@ export default function PreparePage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <h3 className="font-semibold mb-2">原始数据</h3>
-                  <PreviewTable data={originalPreview} schema={currentProfile.schema} />
+                  <PreviewTable data={originalPreview} schema={originalSchema.length ? originalSchema : currentProfile.schema} />
                 </div>
                 <div>
                   <h3 className="font-semibold mb-2">应用参数后</h3>
-                  <PreviewTable data={processedPreview} schema={currentProfile.schema} />
+                  <PreviewTable
+                    data={processedPreview}
+                    schema={schemaForPreview(currentProfile.schema, processSpec)}
+                  />
                 </div>
               </div>
             </CardContent>
