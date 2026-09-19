@@ -55,10 +55,31 @@ export function AssistantPanel() {
           content: data.reply,
         });
 
-        if (data.profile) {
-          applyProfile(data.profile);
+        if (data.process_spec) {
+          updateProcessSpec(
+            data.process_spec,
+            'chat-plan'
+          );
+        
+          if (currentProfile) {
+            const mergedSpec = {
+              ...processSpec,
+              ...data.process_spec,
+            };
+        
+            const processed = previewFromSpec(
+              currentProfile.previewRows,
+              currentProfile.schema,
+              mergedSpec
+            );
+        
+            setProcessedPreview(processed.data);
+          }
+        
+          toast.success('已生成处理方案', {
+            description: '已更新预览，确认后可点击“运行一次”执行',
+          });
         }
-
 
       } catch(error) {
 

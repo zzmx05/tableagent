@@ -2,7 +2,6 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from pathlib import Path
 from io import BytesIO
 from typing import Any, Dict, List, Optional
 import pandas as pd
@@ -15,15 +14,7 @@ from openai import OpenAI
 from agent.memory import memory
 from agent.state import AgentState, ToolCallState
 from agent.tools import registry
-
-DATA_ROOT = Path(
-    os.getenv(
-        "TABLE_AGENT_DATA",
-        Path(__file__).resolve().parent / "runtime" / "datasets"
-    )
-)
-
-DATA_ROOT.mkdir(parents=True, exist_ok=True)
+from dataset_manager import dataset_manager
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("DEEPSEEK_API_KEY"), base_url=os.getenv("DEEPSEEK_BASE_URL"))
@@ -57,6 +48,7 @@ class ChatResponse(BaseModel):
     reply: str
     agent_state: AgentState
     profile: Optional[Dict[str, Any]] = None
+    process_spec: Optional[Dict[str, Any]] = None
 
 app = FastAPI(title="Table Agent Backend")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -201,10 +193,7 @@ async def upload_file(
             detail=f"文件解析失败: {e}"
         )
 
-    # 保存真实 DataFrame
-    dataset_path = DATA_ROOT / f"{dataset_id}.pkl"
-
-    df.to_pickle(dataset_path)
+    dataset_manager.create_dataset(df, dataset_id=dataset_id)
 
     # 生成前 50 行预览
     preview_df = df.head(50)
@@ -322,29 +311,122 @@ def build_profile_from_df(dataset_id: str, df: pd.DataFrame):
 def process_dataset(req: ProcessRequest):
     dataset_id = req.dataset_id
 
-    dataset_path = DATA_ROOT / f"{dataset_id}.pkl"
-
-    if not dataset_path.exists():
+    if not dataset_manager.exists(dataset_id):
         raise HTTPException(
             status_code=404,
             detail=f"找不到数据集: {dataset_id}"
         )
 
-    df = pd.read_pickle(dataset_path)
+    df = dataset_manager.load_version(dataset_id)
     input_rows = len(df)
     process_spec = req.process_spec or {}
 
     # 1. 缺失值处理
     missing = process_spec.get("missing") or {}
     strategy = missing.get("strategy")
+    column = missing.get("column")
 
     if strategy == "drop":
-        column = missing.get("column")
-
         if column:
+            if column not in df.columns:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"缺失值处理失败：找不到列 {column}"
+                )
+
             df = df.dropna(subset=[column])
         else:
             df = df.dropna()
+
+
+    elif strategy == "fill_const":
+        value = missing.get("value")
+
+        if column:
+            if column not in df.columns:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"缺失值处理失败：找不到列 {column}"
+                )
+
+            df[column] = df[column].fillna(value)
+
+        else:
+            df = df.fillna(value)
+
+
+    elif strategy == "fill_mean":
+        if not column:
+            raise HTTPException(
+                status_code=400,
+                detail="均值填充必须指定 column"
+            )
+
+        if column not in df.columns:
+            raise HTTPException(
+                status_code=400,
+                detail=f"找不到列 {column}"
+            )
+
+        if not pd.api.types.is_numeric_dtype(df[column]):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{column} 不是数值列，不能使用均值填充"
+            )
+
+        df[column] = df[column].fillna(
+            df[column].mean()
+        )
+
+
+    elif strategy == "fill_median":
+        if not column:
+            raise HTTPException(
+                status_code=400,
+                detail="中位数填充必须指定 column"
+            )
+
+        if column not in df.columns:
+            raise HTTPException(
+                status_code=400,
+                detail=f"找不到列 {column}"
+            )
+
+        if not pd.api.types.is_numeric_dtype(df[column]):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{column} 不是数值列，不能使用中位数填充"
+            )
+
+        df[column] = df[column].fillna(
+            df[column].median()
+        )
+
+
+    elif strategy == "fill_mode":
+        if not column:
+            raise HTTPException(
+                status_code=400,
+                detail="众数填充必须指定 column"
+            )
+
+        if column not in df.columns:
+            raise HTTPException(
+                status_code=400,
+                detail=f"找不到列 {column}"
+            )
+
+        mode = df[column].mode(dropna=True)
+
+        if mode.empty:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{column} 无法计算众数"
+            )
+
+        df[column] = df[column].fillna(
+            mode.iloc[0]
+        )
 
     # 2. 列选择
     selected_columns = process_spec.get("select")
@@ -369,10 +451,12 @@ def process_dataset(req: ProcessRequest):
                 status_code=400,
                 detail=f"筛选表达式执行失败: {e}"
             )
-
-    # 保存处理后的真实 DataFrame
-    df.to_pickle(dataset_path)
-
+    version_info = dataset_manager.save_new_version(
+        dataset_id,
+        df,
+        operation_name="process",
+        parameters=process_spec,
+    )
     profile = build_profile_from_df(
         dataset_id,
         df
@@ -385,7 +469,49 @@ def process_dataset(req: ProcessRequest):
         "outputRows": int(len(df)),
         "affectedColumns": [],
         "missingChanges": [],
+        "inputVersion": version_info["input_version"],
+        "outputVersion": version_info["output_version"],
+        "operationId": version_info["operation_id"],
         "profile": profile,
+    }
+
+class RollbackRequest(BaseModel):
+    version: str
+
+@app.post("/datasets/{dataset_id}/rollback")
+def rollback_dataset(
+    dataset_id: str,
+    req: RollbackRequest,
+):
+    if not dataset_manager.exists(dataset_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"找不到数据集: {dataset_id}",
+        )
+
+    try:
+        metadata = dataset_manager.rollback_version(
+            dataset_id,
+            req.version,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=str(e),
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
+
+    df = dataset_manager.load_version(dataset_id)
+
+    return {
+        "status": "success",
+        "datasetId": dataset_id,
+        "currentVersion": metadata["current_version"],
+        "profile": build_profile_from_df(dataset_id, df),
     }
 
 @app.get("/")
@@ -403,35 +529,65 @@ def clear_session(session_id: str):
 def _load_profile(dataset_id: str | None):
     if not dataset_id:
         return None
-    dataset_path = DATA_ROOT / f"{dataset_id}.pkl"
-    if not dataset_path.exists():
+    if not dataset_manager.exists(dataset_id):
         return None
-    df = pd.read_pickle(dataset_path)
+    df = dataset_manager.load_version(dataset_id)
     return build_profile_from_df(dataset_id, df)
 
+def build_process_spec_from_state(
+    state: AgentState
+) -> Dict[str, Any]:
+    spec: Dict[str, Any] = {}
+
+    for call in state.tool_calls or []:
+        if getattr(call, "error", None):
+            continue
+
+        name = call.name
+        args = call.arguments or {}
+
+        if name == "fill_missing_values":
+            spec["missing"] = {
+                "strategy": "fill_const",
+                "column": args.get("column"),
+                "value": args.get("value"),
+            }
+
+        elif name == "drop_missing_values":
+            spec["missing"] = {
+                "strategy": "drop",
+                "column": args.get("column"),
+            }
+
+        elif name == "filter_rows":
+            spec["filter"] = args.get("expression")
+
+    return spec
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
-    answer, state = run_agent_turn(req.session_id, req.message, req.context)
+    answer, state = run_agent_turn(req.session_id,req.message,req.context)
     dataset_id = (req.context or {}).get("dataset_id")
+    process_spec = build_process_spec_from_state(state)
     return {
         "session_id": req.session_id,
         "reply": answer,
         "agent_state": state,
-        "profile": _load_profile(dataset_id),
+        # Chat 不提交数据
+        "profile": None,
+        # 返回规划结果
+        "process_spec": process_spec or None,
     }
 
 @app.get("/datasets/{dataset_id}/preview")
 def get_dataset_preview(dataset_id: str):
-    dataset_path = DATA_ROOT / f"{dataset_id}.pkl"
-
-    if not dataset_path.exists():
+    if not dataset_manager.exists(dataset_id):
         raise HTTPException(
             status_code=404,
             detail=f"找不到数据集: {dataset_id}"
         )
 
-    df = pd.read_pickle(dataset_path)
+    df = dataset_manager.load_version(dataset_id)
 
     profile = build_profile_from_df(
         dataset_id,
@@ -451,11 +607,10 @@ class ExportRequest(BaseModel):
 
 @app.post("/export")
 def export_dataset(req: ExportRequest):
-    dataset_path = DATA_ROOT / f"{req.dataset_id}.pkl"
-    if not dataset_path.exists():
+    if not dataset_manager.exists(req.dataset_id):
         raise HTTPException(status_code=404, detail=f"找不到数据集: {req.dataset_id}")
 
-    df = pd.read_pickle(dataset_path)
+    df = dataset_manager.load_version(req.dataset_id)
     if req.null_representation != "":
         df = df.fillna(req.null_representation)
 
@@ -483,3 +638,17 @@ def export_dataset(req: ExportRequest):
         media_type="text/csv; charset=" + req.encoding,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+@app.get("/datasets/{dataset_id}/versions")
+def get_dataset_versions(dataset_id: str):
+    if not dataset_manager.exists(dataset_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"找不到数据集: {dataset_id}",
+        )
+
+    return {
+        "datasetId": dataset_id,
+        "currentVersion": dataset_manager.get_current_version(dataset_id),
+        "versions": dataset_manager.list_versions(dataset_id),
+    }

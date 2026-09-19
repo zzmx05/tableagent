@@ -1,6 +1,6 @@
 import { DatasetMeta, DatasetProfile, TableProcessSpec, ColumnSchema } from '@/types/table';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
 async function readError(response: Response, fallback: string) {
   const payload = await response.json().catch(() => null);
@@ -130,4 +130,56 @@ export function previewFromSpec(
     data: rows.map((row) => indices.map((index) => row[index])),
     schema: nextSchema,
   };
+}
+
+export async function getDatasetVersions(
+  datasetId: string
+): Promise<{
+  datasetId: string;
+  currentVersion: string;
+  versions: string[];
+}> {
+  const response = await fetch(
+    `${API_BASE}/datasets/${datasetId}/versions`
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await readError(response, '获取版本历史失败')
+    );
+  }
+
+  return response.json();
+}
+
+
+export async function rollbackDataset(
+  datasetId: string,
+  version: string
+): Promise<{
+  status: string;
+  datasetId: string;
+  currentVersion: string;
+  profile: DatasetProfile;
+}> {
+  const response = await fetch(
+    `${API_BASE}/datasets/${datasetId}/rollback`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        version,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await readError(response, '撤销失败')
+    );
+  }
+
+  return response.json();
 }

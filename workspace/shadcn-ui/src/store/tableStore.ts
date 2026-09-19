@@ -19,6 +19,8 @@ interface TableStore extends AppState {
   setPrepareSubTab: (tab: AppState['prepareSubTab']) => void;
   toggleDiffOnly: () => void;
   undoLastSpec: () => void;
+  setDatasetVersion: (version: string ,versions?: string[]) => void;
+  clearProcessSpec: () => void;
   clearDataset: () => void;
   toggleDataExternal: () => void;
   clearAllFlows: () => void;
@@ -61,15 +63,23 @@ export const useTableStore = create<TableStore>((set, get) => ({
   prepareSubTab: 'params',
   showDiffOnly: false,
   dataExternalEnabled: false,
+  currentVersion: 'v000',
+  versionHistory: [],
 
   // Actions
   setCurrentDataset: (meta, profile) => {
     set({
       currentDataset: meta,
       currentProfile: profile,
+
+      // 新数据集永远从原始版本 v000 开始
+      currentVersion: 'v000',
+      versionHistory: ['v000'],
+
       originalPreview: profile.previewRows,
       originalSchema: profile.schema,
       processedPreview: profile.previewRows,
+
       processSpec: {},
       specHistory: [],
     });
@@ -187,10 +197,33 @@ export const useTableStore = create<TableStore>((set, get) => ({
     }
   },
 
+  // 同步后端数据版本
+  setDatasetVersion: (version, versions) => {
+    set({
+      currentVersion: version,
+      ...(versions !== undefined
+        ? { versionHistory: versions }
+        : {}),
+    });
+  },
+
+  // 一次数据处理成功后，清空本轮参数
+  clearProcessSpec: () => {
+    set({
+      processSpec: {},
+      specHistory: [],
+    });
+  },
+
   clearDataset: () => {
     set({
       currentDataset: null,
       currentProfile: null,
+
+      // 清空版本状态
+      currentVersion: 'v000',
+      versionHistory: [],
+
       processSpec: {},
       specHistory: [],
       currentRun: null,

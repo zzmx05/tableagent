@@ -6,6 +6,7 @@ export interface TableProcessSpec {
   cast?: Record<string, string>;
   missing?: {
     strategy: 'drop' | 'fill_const' | 'fill_mean' | 'fill_median' | 'fill_mode';
+    column?: string;
     value?: string | number;
   };
   filter?: string;
@@ -127,6 +128,9 @@ export interface AppState {
   
   // Settings
   dataExternalEnabled: boolean;
+
+  currentVersion: string;
+  versionHistory: string[];
 }
 
 export interface UploadOptions {

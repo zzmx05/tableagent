@@ -17,8 +17,7 @@ import { Play, RotateCcw, AlertCircle, Info } from 'lucide-react';
 import { toast } from 'sonner';
 // import { mockProcess, mockGetRun, generateProcessedPreview } from '@/lib/mockApi';
 import { ColumnSchema } from '@/types/table';
-import { processDataset, schemaForPreview } from '@/lib/api';
-
+import {processDataset,schemaForPreview,rollbackDataset,getDatasetVersions,} from '@/lib/api';
 export default function PreparePage() {
   const {
     currentProfile,
@@ -37,6 +36,12 @@ export default function PreparePage() {
     toggleDiffOnly,
     undoLastSpec,
     specHistory,
+  
+    // 版本管理
+    currentVersion,
+    versionHistory,
+    setDatasetVersion,
+    clearProcessSpec,
   } = useTableStore();
 
   const [running, setRunning] = useState(false);
@@ -58,11 +63,22 @@ export default function PreparePage() {
   const handleRun = async () => {
     if (!currentProfile) return;
   
+    // 没有参数变化时不创建空版本
+    if (Object.keys(processSpec).length === 0) {
+      toast.info('没有需要运行的参数修改');
+      return;
+    }
+  
     setRunning(true);
   
     try {
-      const result = await processDataset(currentProfile.datasetId, processSpec);
-
+      // 1. 执行本轮数据处理
+      const result = await processDataset(
+        currentProfile.datasetId,
+        processSpec
+      );
+  
+      // 2. 保存运行结果
       setCurrentRun({
         runId: result.runId,
         status: result.status,
@@ -73,17 +89,28 @@ export default function PreparePage() {
         missingChanges: result.missingChanges || [],
         startedAt: new Date().toISOString(),
       });
-
+  
+      // 3. 用后端返回的新 profile 更新页面
       if (result.profile) {
         applyProfile(result.profile);
-      } else {
-        setProcessedPreview(result.profile?.previewRows || []);
       }
   
-      toast.success('运行成功', {
-        description: `输出 ${result.outputRows} 行数据`,
-      });
+      // 4. 重新向后端查询版本状态
+      const versions = await getDatasetVersions(
+        currentProfile.datasetId
+      );
   
+      setDatasetVersion(
+        versions.currentVersion,
+        versions.versions
+      );
+  
+      // 5. 本轮操作已经写入新版本，不应该重复执行
+      clearProcessSpec();
+  
+      toast.success('运行成功', {
+        description: `已生成 ${versions.currentVersion}，输出 ${result.outputRows} 行数据`,
+      });
     } catch (error) {
       console.error('运行失败:', error);
   
@@ -93,17 +120,73 @@ export default function PreparePage() {
             ? error.message
             : '未知错误',
       });
-  
     } finally {
       setRunning(false);
     }
   };
 
-  const handleUndo = () => {
+  const handleUndoSpec = () => {
     undoLastSpec();
-    toast.info('已撤销上次修改');
+    toast.info('已撤销上次参数修改');
   };
 
+  const handleRollback = async () => {
+    if (!currentProfile) return;
+  
+    // 找到当前版本的位置
+    const currentIndex = versionHistory.indexOf(currentVersion);
+  
+    if (currentIndex <= 0) {
+      toast.info('已经是原始版本 v000');
+      return;
+    }
+  
+    // 当前版本的上一个版本
+    const targetVersion = versionHistory[currentIndex - 1];
+  
+    setRunning(true);
+  
+    try {
+      // 1. 通知后端移动 current_version
+      const result = await rollbackDataset(
+        currentProfile.datasetId,
+        targetVersion
+      );
+  
+      // 2. 更新页面上的数据
+      if (result.profile) {
+        applyProfile(result.profile);
+      }
+  
+      // 3. 再从后端获取真实版本状态
+      const versions = await getDatasetVersions(
+        currentProfile.datasetId
+      );
+  
+      setDatasetVersion(
+        versions.currentVersion,
+        versions.versions
+      );
+  
+      // 防止撤销后还残留旧参数
+      clearProcessSpec();
+  
+      toast.success('撤销成功', {
+        description: `已恢复到 ${targetVersion}`,
+      });
+    } catch (error) {
+      console.error('撤销运行失败:', error);
+  
+      toast.error('撤销运行失败', {
+        description:
+          error instanceof Error
+            ? error.message
+            : '未知错误',
+      });
+    } finally {
+      setRunning(false);
+    }
+  };
   const hasChanges = specHistory.length > 0;
 
   return (
@@ -114,14 +197,35 @@ export default function PreparePage() {
           <h1 className="text-3xl font-bold">数据处理</h1>
           <p className="text-muted-foreground mt-1">配置参数并预览处理结果</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={handleUndo} disabled={!hasChanges}>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline">
+            当前版本：{currentVersion}
+          </Badge>
+
+          <Button
+            variant="outline"
+            onClick={handleUndoSpec}
+            disabled={!hasChanges || running}
+          >
             <RotateCcw className="h-4 w-4 mr-2" />
-            撤销
+            撤销参数
           </Button>
-          <Button onClick={handleRun} disabled={running}>
+
+          <Button
+            variant="outline"
+            onClick={handleRollback}
+            disabled={currentVersion === 'v000' || running}
+          >
+            <RotateCcw className="h-4 w-4 mr-2" />
+            撤销运行
+          </Button>
+
+          <Button
+            onClick={handleRun}
+            disabled={running || !hasChanges}
+          >
             <Play className="h-4 w-4 mr-2" />
-            运行一次
+            {running ? '处理中...' : '运行一次'}
           </Button>
         </div>
       </div>
@@ -132,8 +236,13 @@ export default function PreparePage() {
           <Info className="h-4 w-4" />
           <AlertDescription>
             检测到 {specHistory.length} 处参数变更
-            <Button variant="link" size="sm" className="ml-2" onClick={handleUndo}>
-              撤销本次应用
+            <Button
+              variant="link"
+              size="sm"
+              className="ml-2"
+              onClick={handleUndoSpec}
+            >
+              撤销参数修改
             </Button>
           </AlertDescription>
         </Alert>

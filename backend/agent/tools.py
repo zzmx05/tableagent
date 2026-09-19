@@ -1,11 +1,8 @@
 """Tool registry used by the model-driven agent loop."""
 
 from typing import Any, Callable, Dict
-from pathlib import Path
-import os
 
-import pandas as pd
-
+from dataset_manager import dataset_manager
 from tools.table_tools import (
     get_table_statistics,
     get_column_info,
@@ -17,16 +14,6 @@ from tools.table_tools import (
     sort_rows,
     fill_missing_values,
     drop_duplicates,
-)
-
-
-DATA_ROOT = Path(
-    os.getenv(
-        "TABLE_AGENT_DATA",
-        Path(__file__).resolve().parents[1]
-        / "runtime"
-        / "datasets"
-    )
 )
 
 
@@ -77,9 +64,13 @@ class ToolRegistry:
                 f"未知工具: {name}"
             )
 
+        ctx = dict(context or {})
+        ctx["_operation_name"] = name
+        ctx["_operation_parameters"] = arguments or {}
+
         result = self._handlers[name](
             arguments or {},
-            context or {}
+            ctx
         )
 
         print("[TOOL RESULT]")
@@ -97,7 +88,10 @@ def _dataset_path(context):
             "当前会话没有 dataset_id，无法找到真实表格"
         )
 
-    dataset_path = DATA_ROOT / f"{dataset_id}.pkl"
+    try:
+        dataset_path = dataset_manager.current_path(dataset_id)
+    except FileNotFoundError as e:
+        raise ValueError(str(e)) from e
 
     if not dataset_path.exists():
         raise ValueError(
@@ -108,14 +102,33 @@ def _dataset_path(context):
 
 
 def _df(context):
-    return pd.read_pickle(
-        _dataset_path(context)
-    )
+    dataset_id = context.get("dataset_id")
+
+    if not dataset_id:
+        raise ValueError(
+            "当前会话没有 dataset_id，无法找到真实表格"
+        )
+
+    try:
+        return dataset_manager.load_version(dataset_id)
+    except FileNotFoundError as e:
+        raise ValueError(str(e)) from e
 
 
 def _save_df(df, context):
-    dataset_path = _dataset_path(context)
-    df.to_pickle(dataset_path)
+    dataset_id = context.get("dataset_id")
+
+    if not dataset_id:
+        raise ValueError(
+            "当前会话没有 dataset_id，无法找到真实表格"
+        )
+
+    dataset_manager.save_new_version(
+        dataset_id,
+        df,
+        operation_name=context.get("_operation_name", "update"),
+        parameters=context.get("_operation_parameters", {}),
+    )
 
 
 # 查询类
@@ -141,7 +154,7 @@ def _drop_missing(args, context):
         args.get("column")
     )
 
-    _save_df(new_df, context)
+    # _save_df(new_df, context)
 
     return {
         "result": result,
@@ -157,7 +170,7 @@ def _delete_column(args, context):
         args["column"]
     )
 
-    _save_df(new_df, context)
+    # _save_df(new_df, context)
 
     return {
         "result": result,
@@ -174,7 +187,7 @@ def _add_row(args, context):
         args["values"]
     )
 
-    _save_df(new_df, context)
+    # _save_df(new_df, context)
 
     return {
         "result": result,
@@ -191,7 +204,7 @@ def _rename_column(args, context):
         args["new_name"]
     )
 
-    _save_df(new_df, context)
+    # _save_df(new_df, context)
 
     return {
         "result": result,
@@ -208,7 +221,7 @@ def _filter_rows(args, context):
         args["expression"]
     )
 
-    _save_df(new_df, context)
+    # _save_df(new_df, context)
 
     return {
         "result": result,
@@ -225,7 +238,7 @@ def _sort_rows(args, context):
         args.get("ascending", True)
     )
 
-    _save_df(new_df, context)
+    # _save_df(new_df, context)
 
     return {
         "result": result,
@@ -243,7 +256,7 @@ def _fill_missing_values(args, context):
         args["value"]
     )
 
-    _save_df(new_df, context)
+    # _save_df(new_df, context)
 
     return {
         "result": result,
@@ -256,7 +269,7 @@ def _drop_duplicates(args, context):
 
     new_df, result = drop_duplicates(df)
 
-    _save_df(new_df, context)
+    # _save_df(new_df, context)
 
     return {
         "result": result,
