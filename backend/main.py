@@ -652,3 +652,96 @@ def get_dataset_versions(dataset_id: str):
         "currentVersion": dataset_manager.get_current_version(dataset_id),
         "versions": dataset_manager.list_versions(dataset_id),
     }
+
+# # fix
+# class FixRequest(BaseModel):
+#     dataset_id: str
+#     process_spec: Dict[str, Any]
+#     error_message: str
+
+# class FixResponse(BaseModel):
+#     explanation: str
+#     patch: Dict[str, Any]
+
+# @app.post("/fix", response_model=FixResponse)
+# def fix_process(req: FixRequest):
+
+#     if not dataset_manager.exists(req.dataset_id):
+#         raise HTTPException(
+#             status_code=404,
+#             detail=f"找不到数据集: {req.dataset_id}"
+#         )
+
+#     df = dataset_manager.load_version(
+#         req.dataset_id
+#     )
+
+#     schema = [
+#         {
+#             "name": str(column),
+#             "dtype": str(df[column].dtype),
+#         }
+#         for column in df.columns
+#     ]
+
+#     prompt = f"""
+# 你是表格数据处理修复器。
+
+# 当前数据字段：
+# {json.dumps(schema, ensure_ascii=False)}
+
+# 当前 process_spec：
+# {json.dumps(req.process_spec, ensure_ascii=False)}
+
+# 执行错误：
+# {req.error_message}
+
+# 你的任务是修复 process_spec。
+
+# 只返回 JSON：
+
+# {{
+#   "explanation": "为什么失败以及如何修复",
+#   "patch": {{
+#   }}
+# }}
+
+# patch 只包含需要修改的字段。
+# 不要执行数据操作。
+# 不要虚构不存在的列。
+# """
+
+#     response = client.chat.completions.create(
+#         model=MODEL,
+#         messages=[
+#             {
+#                 "role": "system",
+#                 "content":
+#                     "你是表格处理参数修复器，只输出合法 JSON。"
+#             },
+#             {
+#                 "role": "user",
+#                 "content": prompt,
+#             },
+#         ],
+#         response_format={
+#             "type": "json_object"
+#         },
+#     )
+
+#     raw = response.choices[0].message.content
+
+#     try:
+#         result = json.loads(raw)
+#     except Exception:
+#         raise HTTPException(
+#             status_code=500,
+#             detail="Fix 模型返回了无效 JSON"
+#         )
+
+#     return {
+#         "explanation":
+#             result.get("explanation", ""),
+#         "patch":
+#             result.get("patch", {}),
+#     }

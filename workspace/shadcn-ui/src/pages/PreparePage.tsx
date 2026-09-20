@@ -15,6 +15,7 @@ import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Play, RotateCcw, AlertCircle, Info } from 'lucide-react';
 import { toast } from 'sonner';
+import { executeCurrentProcess } from '@/lib/executeProcess';
 // import { mockProcess, mockGetRun, generateProcessedPreview } from '@/lib/mockApi';
 import { ColumnSchema } from '@/types/table';
 import {processDataset,schemaForPreview,rollbackDataset,getDatasetVersions,} from '@/lib/api';
@@ -63,7 +64,6 @@ export default function PreparePage() {
   const handleRun = async () => {
     if (!currentProfile) return;
   
-    // 没有参数变化时不创建空版本
     if (Object.keys(processSpec).length === 0) {
       toast.info('没有需要运行的参数修改');
       return;
@@ -72,48 +72,14 @@ export default function PreparePage() {
     setRunning(true);
   
     try {
-      // 1. 执行本轮数据处理
-      const result = await processDataset(
-        currentProfile.datasetId,
-        processSpec
-      );
-  
-      // 2. 保存运行结果
-      setCurrentRun({
-        runId: result.runId,
-        status: result.status,
-        progress: 100,
-        inputRows: result.inputRows,
-        outputRows: result.outputRows,
-        affectedColumns: result.affectedColumns || [],
-        missingChanges: result.missingChanges || [],
-        startedAt: new Date().toISOString(),
-      });
-  
-      // 3. 用后端返回的新 profile 更新页面
-      if (result.profile) {
-        applyProfile(result.profile);
-      }
-  
-      // 4. 重新向后端查询版本状态
-      const versions = await getDatasetVersions(
-        currentProfile.datasetId
-      );
-  
-      setDatasetVersion(
-        versions.currentVersion,
-        versions.versions
-      );
-  
-      // 5. 本轮操作已经写入新版本，不应该重复执行
-      clearProcessSpec();
+      const { result, version } =
+        await executeCurrentProcess();
   
       toast.success('运行成功', {
-        description: `已生成 ${versions.currentVersion}，输出 ${result.outputRows} 行数据`,
+        description:
+          `已生成 ${version}，输出 ${result.outputRows} 行数据`,
       });
     } catch (error) {
-      console.error('运行失败:', error);
-  
       toast.error('运行失败', {
         description:
           error instanceof Error

@@ -8,25 +8,27 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { MessageType, Message, TableProcessSpec } from '@/types/table';
+import { MessageType, Message } from '@/types/table';
 import { ChevronLeft, ChevronRight, Send, Copy, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import { chatWithAgent, previewFromSpec } from '@/lib/api';
+import { executeCurrentProcess } from '@/lib/executeProcess';
 
 export function AssistantPanel() {
-  const { assistantCollapsed, toggleAssistant, messages, addMessage, updateProcessSpec, processSpec, currentProfile, currentDataset, setProcessedPreview, applyProfile } = useTableStore();
+  const { assistantCollapsed, toggleAssistant, messages, addMessage, updateProcessSpec, processSpec, currentProfile, currentDataset, setProcessedPreview } = useTableStore();
   const [inputMode, setInputMode] = useState<MessageType>('chat');
   const [inputValue, setInputValue] = useState('');
   const [messageFilter, setMessageFilter] = useState<MessageType | 'all'>('all');
 
   const placeholders = {
     chat: '询问数据统计、建议或解释...',
-    execute: '描述要执行的数据处理操作...',
+    execute: '可选：填写本次执行备注...',
     fix: '描述遇到的错误或需要修复的问题...',
   };
 
-  const handleSend = async() => {
-    if (!inputValue.trim()) return;
+  const handleSend = async () => {
+    // Chat / Fix 需要输入文字；Execute 可以直接执行当前 processSpec
+    if (inputMode !== 'execute' && !inputValue.trim()) return;
 
     if (inputMode === 'chat') {
       // 用户消息显示
@@ -95,26 +97,51 @@ export function AssistantPanel() {
 
       }
     } else if (inputMode === 'execute') {
-      // 生成 execute 方案
-      const mockSpec: TableProcessSpec = {
-        select: ['Name', 'Age', 'Email', 'Country'],
-        missing: {
-          strategy: 'fill_const',
-          value: 'N/A',
-        },
-        filter: 'age >= 18',
-      };
-
+      if (Object.keys(processSpec).length === 0) {
+        toast.info('当前没有待执行方案');
+        return;
+      }
+    
+      // 保存一份，因为执行成功后 processSpec 会被清空
+      const executingSpec = { ...processSpec };
+    
       addMessage({
         type: 'execute',
-        content: `执行方案: ${inputValue}`,
-        spec: mockSpec,
-        impact: {
-          affectedColumns: 4,
-          estimatedRowsDeleted: 150,
-          description: '将填充缺失值并过滤年龄小于18的记录',
-        },
+        content: `正在执行: ${inputValue || '当前处理方案'}`,
+        spec: executingSpec,
       });
+    
+      try {
+        const { result, version } =
+          await executeCurrentProcess();
+    
+        addMessage({
+          type: 'execute',
+          content:
+            `执行成功，已生成 ${version}，` +
+            `${result.inputRows} → ${result.outputRows} 行`,
+          spec: executingSpec,
+        });
+    
+        toast.success('Execute 成功', {
+          description: `已生成 ${version}`,
+        });
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : '未知执行错误';
+    
+        addMessage({
+          type: 'execute',
+          content: `执行失败：${message}`,
+          spec: executingSpec,
+        });
+    
+        toast.error('Execute 失败', {
+          description: '可以切换到 Fix 生成修复方案',
+        });
+      }
     } else if (inputMode === 'fix') {
       // 生成 fix 补丁
       addMessage({
