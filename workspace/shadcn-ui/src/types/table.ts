@@ -53,6 +53,7 @@ export interface RunSummary {
   errorMessage?: string;
   startedAt: string;
   completedAt?: string;
+  failedSpec?: TableProcessSpec;
 }
 
 export interface FlowData {
@@ -85,7 +86,7 @@ export interface Message {
   // For fix messages
   targetError?: string;
   patch?: Partial<TableProcessSpec>;
-  diff?: Array<{ path: string; before: string | number | null; after: string | number | null }>;
+  diff?: Array<{ path: string; before: unknown; after: unknown }>;
   
   // For chat messages
   statistics?: Record<string, string | number | Record<string, number>>;

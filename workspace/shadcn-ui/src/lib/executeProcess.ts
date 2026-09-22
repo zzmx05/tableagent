@@ -81,6 +81,8 @@ import {
   
         errorCode: 'PROCESS_FAILED',
         errorMessage: message,
+        
+        failedSpec: { ...processSpec },
       });
   
       throw error;

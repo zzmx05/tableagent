@@ -183,3 +183,55 @@ export async function rollbackDataset(
 
   return response.json();
 }
+
+export interface FixProcessPayload {
+  datasetId: string;
+  processSpec: TableProcessSpec;
+  errorCode: string;
+  errorMessage: string;
+}
+
+export interface FixProcessResult {
+  explanation: string;
+
+  patch: Partial<TableProcessSpec>;
+
+  diff: Array<{
+    path: string;
+    before: unknown;
+    after: unknown;
+  }>;
+
+  can_auto_apply: boolean;
+}
+
+export async function fixProcess(
+  payload: FixProcessPayload
+): Promise<FixProcessResult> {
+  const response = await fetch(
+    `${API_BASE}/fix`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        dataset_id: payload.datasetId,
+        process_spec: payload.processSpec,
+        error_code: payload.errorCode,
+        error_message: payload.errorMessage,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await readError(
+        response,
+        '生成 Fix 失败'
+      )
+    );
+  }
+
+  return response.json();
+}

@@ -11,11 +11,11 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { MessageType, Message } from '@/types/table';
 import { ChevronLeft, ChevronRight, Send, Copy, Star } from 'lucide-react';
 import { toast } from 'sonner';
-import { chatWithAgent, previewFromSpec } from '@/lib/api';
+import { chatWithAgent, previewFromSpec, fixProcess } from '@/lib/api';
 import { executeCurrentProcess } from '@/lib/executeProcess';
 
 export function AssistantPanel() {
-  const { assistantCollapsed, toggleAssistant, messages, addMessage, updateProcessSpec, processSpec, currentProfile, currentDataset, setProcessedPreview } = useTableStore();
+  const {assistantCollapsed, toggleAssistant, messages, addMessage, updateProcessSpec, processSpec, currentProfile, currentDataset, setProcessedPreview,currentRun} = useTableStore();
   const [inputMode, setInputMode] = useState<MessageType>('chat');
   const [inputValue, setInputValue] = useState('');
   const [messageFilter, setMessageFilter] = useState<MessageType | 'all'>('all');
@@ -143,18 +143,67 @@ export function AssistantPanel() {
         });
       }
     } else if (inputMode === 'fix') {
-      // 生成 fix 补丁
-      addMessage({
-        type: 'fix',
-        content: `修复建议: ${inputValue}`,
-        targetError: 'ERR_INVALID_FILTER',
-        patch: {
-          filter: 'Age >= 18',
-        },
-        diff: [
-          { path: 'filter', before: 'age >= 18', after: 'Age >= 18' },
-        ],
-      });
+      if (!currentProfile) {
+        toast.error('当前没有数据集');
+        return;
+      }
+    
+      if (
+        !currentRun ||
+        currentRun.status !== 'error' ||
+        !currentRun.errorMessage ||
+        !currentRun.failedSpec
+      ) {
+        toast.info('当前没有可修复的 Execute 错误');
+        return;
+      }
+    
+      try {
+        const fix = await fixProcess({
+          datasetId: currentProfile.datasetId,
+    
+          processSpec: currentRun.failedSpec,
+    
+          errorCode:
+            currentRun.errorCode ||
+            'PROCESS_FAILED',
+    
+          errorMessage:
+            currentRun.errorMessage,
+        });
+    
+        addMessage({
+          type: 'fix',
+          content: fix.explanation,
+    
+          targetError:
+            currentRun.errorCode ||
+            'PROCESS_FAILED',
+    
+          patch: fix.patch,
+    
+          diff: fix.diff,
+        });
+    
+        if (fix.can_auto_apply) {
+          toast.success('已生成 Fix 草案', {
+            description:
+              '检查补丁后可以应用或重试',
+          });
+        } else {
+          toast.warning('Fix 无法安全自动修复', {
+            description:
+              '请检查错误说明后手动调整参数',
+          });
+        }
+      } catch (error) {
+        toast.error('Fix 生成失败', {
+          description:
+            error instanceof Error
+              ? error.message
+              : '未知错误',
+        });
+      }
     }
 
     setInputValue('');
@@ -189,12 +238,117 @@ export function AssistantPanel() {
     }
   };
 
-  const handleApplyPatch = (message: Message) => {
-    if (message.patch) {
-      updateProcessSpec(message.patch, `fix #${message.id}`);
-      toast.success('已应用补丁', {
-        description: '参数已更新',
-        duration: 5000,
+  const handleApplyPatch = (
+    message: Message
+  ) => {
+    if (!message.patch) return;
+  
+    updateProcessSpec(
+      message.patch,
+      `fix #${message.id}`
+    );
+  
+    if (currentProfile) {
+      const failedSpec =
+        currentRun?.failedSpec || processSpec;
+  
+      const fixedSpec = {
+        ...failedSpec,
+        ...message.patch,
+      };
+  
+      const processed = previewFromSpec(
+        currentProfile.previewRows,
+        currentProfile.schema,
+        fixedSpec
+      );
+  
+      setProcessedPreview(
+        processed.data
+      );
+    }
+  
+    toast.success('已应用 Fix 补丁', {
+      description:
+        '已更新参数和预览，可以重新 Execute',
+      duration: 5000,
+    });
+  };
+
+  const handleApplyPatchAndRetry = async (
+    message: Message
+  ) => {
+    if (!message.patch) return;
+  
+    /*
+     * 先基于真正失败的 spec + patch
+     * 生成完整修复方案。
+     */
+    const failedSpec =
+      currentRun?.failedSpec || processSpec;
+  
+    const fixedSpec = {
+      ...failedSpec,
+      ...message.patch,
+    };
+  
+    /*
+     * updateProcessSpec 是异步状态更新。
+     * 所以先把完整 fixedSpec 写进去。
+     */
+    updateProcessSpec(
+      fixedSpec,
+      `fix-retry #${message.id}`
+    );
+  
+    if (currentProfile) {
+      const processed = previewFromSpec(
+        currentProfile.previewRows,
+        currentProfile.schema,
+        fixedSpec
+      );
+  
+      setProcessedPreview(
+        processed.data
+      );
+    }
+  
+    /*
+     * Zustand set 通常同步，
+     * 这里从 store 重新读取确认后的状态。
+     */
+    try {
+      const { result, version } =
+        await executeCurrentProcess();
+  
+      addMessage({
+        type: 'execute',
+        content:
+          `Fix 重试成功，已生成 ${version}，` +
+          `${result.inputRows} → ${result.outputRows} 行`,
+        spec: fixedSpec,
+      });
+  
+      toast.success('Fix 重试成功', {
+        description: `已生成 ${version}`,
+      });
+  
+    } catch (error) {
+      const messageText =
+        error instanceof Error
+          ? error.message
+          : '未知执行错误';
+  
+      addMessage({
+        type: 'execute',
+        content:
+          `Fix 重试仍然失败：${messageText}`,
+        spec: fixedSpec,
+      });
+  
+      toast.error('Fix 重试失败', {
+        description:
+          '新的错误已记录，可以再次生成 Fix',
       });
     }
   };
@@ -245,7 +399,7 @@ export function AssistantPanel() {
             </div>
           )}
           {filteredMessages.map((msg) => (
-            <MessageCard key={msg.id} message={msg} onApplySpec={handleApplySpec} onApplyPatch={handleApplyPatch} />
+            <MessageCard key={msg.id} message={msg} onApplySpec={handleApplySpec} onApplyPatch={handleApplyPatch} onApplyPatchAndRetry={handleApplyPatchAndRetry} />
           ))}
         </div>
       </ScrollArea>
@@ -284,10 +438,12 @@ function MessageCard({
   message,
   onApplySpec,
   onApplyPatch,
+  onApplyPatchAndRetry,
 }: {
   message: Message;
   onApplySpec: (msg: Message) => void;
   onApplyPatch: (msg: Message) => void;
+  onApplyPatchAndRetry:(msg: Message) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -362,8 +518,8 @@ function MessageCard({
                 </div>
               )}
             </div>
-            <div className="flex gap-2">
-              <Button size="sm" onClick={() => onApplyPatch(message)}>
+            <div className="flex gap-2">  
+            <Button size="sm" onClick={() => onApplyPatchAndRetry(message)}>
                 应用补丁并重试
               </Button>
               <Button size="sm" variant="outline" onClick={() => onApplyPatch(message)}>
