@@ -1,0 +1,229 @@
+# ============================================================
+# tableAgent0
+# Root .gitignore
+# ============================================================
+workspace/shadcn-ui/pnpm-lock.yaml
+
+
+# ------------------------------------------------------------
+# 1. Python
+# ------------------------------------------------------------
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.coverage
+.coverage.*
+htmlcov/
+
+*.egg-info/
+.eggs/
+dist/
+build/
+
+
+# ------------------------------------------------------------
+# 2. Python virtual environments
+# ------------------------------------------------------------
+
+.venv/
+venv/
+env/
+ENV/
+
+
+# ------------------------------------------------------------
+# 3. Environment variables / secrets
+# ------------------------------------------------------------
+
+.env
+.env.*
+!.env.example
+
+*.pem
+*.key
+
+
+# ------------------------------------------------------------
+# 4. Node / Frontend
+# ------------------------------------------------------------
+
+node_modules/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+.npm/
+.pnpm-store/
+
+# Frontend build output
+.next/
+.nuxt/
+.svelte-kit/
+.vite/
+out/
+coverage/
+
+
+# ------------------------------------------------------------
+# 5. Local frontend environment files
+# ------------------------------------------------------------
+
+*.local
+
+
+# ------------------------------------------------------------
+# 6. HRS original / master data
+# ------------------------------------------------------------
+# These files are large and should remain local.
+# Do NOT commit raw HRS respondent data.
+
+data/raw/*
+data/master/*
+
+# Keep directories in Git if .gitkeep is used.
+!data/raw/.gitkeep
+!data/master/.gitkeep
+
+
+# ------------------------------------------------------------
+# 7. HRS metadata
+# ------------------------------------------------------------
+# Metadata is part of the HRS semantic system and should
+# normally be version controlled.
+
+# Do NOT ignore:
+# data/metadata/hrs_variables.json
+
+
+# ------------------------------------------------------------
+# 8. DatasetManager runtime data
+# ------------------------------------------------------------
+# Local working datasets and version snapshots:
+# v000, v001, v002 ...
+
+backend/runtime/
+runtime/
+
+# If runtime is later moved to project root, it is still ignored.
+
+
+# ------------------------------------------------------------
+# 9. Generated working datasets / temporary exports
+# ------------------------------------------------------------
+
+tmp/
+temp/
+*.tmp
+
+# User/generated exports
+exports/
+backend/exports/
+
+# Optional local workspace data outputs
+workspace/data/
+
+
+# ------------------------------------------------------------
+# 10. Pickle / local dataframe snapshots
+# ------------------------------------------------------------
+
+*.pkl
+*.pickle
+
+
+# ------------------------------------------------------------
+# 11. Large statistical data formats
+# ------------------------------------------------------------
+
+*.sav
+*.dta
+*.sas7bdat
+
+# Parquet is treated as generated/local master data by default.
+*.parquet
+
+
+# ------------------------------------------------------------
+# 12. Logs
+# ------------------------------------------------------------
+
+*.log
+logs/
+
+
+# ------------------------------------------------------------
+# 13. IDE
+# ------------------------------------------------------------
+
+.vscode/
+.idea/
+
+*.swp
+*.swo
+
+
+# ------------------------------------------------------------
+# 14. Windows
+# ------------------------------------------------------------
+
+Thumbs.db
+Thumbs.db:encryptable
+Desktop.ini
+$RECYCLE.BIN/
+
+
+# ------------------------------------------------------------
+# 15. macOS
+# ------------------------------------------------------------
+
+.DS_Store
+.AppleDouble
+.LSOverride
+
+
+# ------------------------------------------------------------
+# 16. Jupyter
+# ------------------------------------------------------------
+
+.ipynb_checkpoints/
+
+
+# ------------------------------------------------------------
+# 17. Test / cache artifacts
+# ------------------------------------------------------------
+
+.cache/
+*.cache
+
+
+# ------------------------------------------------------------
+# 18. Local backup files
+# ------------------------------------------------------------
+
+*.bak
+*.backup
+*.old
+*~
+
+# ------------------------------------------------------------
+# 19. Local archives
+# ------------------------------------------------------------
+
+*.7z
+*.zip
+*.rar
+
+
+# ------------------------------------------------------------
+# 20. Local test datasets
+# ------------------------------------------------------------
+
+test.csv

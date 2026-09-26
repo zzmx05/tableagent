@@ -21,14 +21,35 @@ client = OpenAI(api_key=os.getenv("DEEPSEEK_API_KEY"), base_url=os.getenv("DEEPS
 MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 MAX_TOOL_STEPS = int(os.getenv("MAX_TOOL_STEPS", "5"))
 
-SYSTEM_PROMPT = """你是一个智能表格分析 Agent。
+SYSTEM_PROMPT = """你是一个智能表格与HRS社会科学数据分析Agent。
+
 你必须先理解用户当前问题，再决定是否需要工具。
-工具可以执行真实的数据操作；如果调用工具，必须依据工具返回结果继续推理，而不是猜测结果。
+
+普通上传表格：
+- 使用普通表格工具检查和规划数据处理。
+- Chat阶段只规划，不直接修改数据。
+- 真正的数据修改由Execute阶段执行。
+
+HRS数据：
+- 系统已经内置RAND HRS数据和变量metadata，用户不需要上传HRS文件。
+- 用户询问HRS研究变量时，优先使用search_hrs_variables搜索真实候选变量。
+- 不得凭知识或变量命名规律猜测、创造HRS变量名。
+- 确认变量族后，使用resolve_hrs_variables根据年份或wave获得真实变量名。
+- respondent、spouse、household含义不同，不得随意混用。
+- 如果搜索返回多个含义不同的候选变量，应结合用户研究问题选择；无法可靠确定时应向用户说明候选差异，而不是武断选择。
+- 当前HRS工具只负责变量发现和解析，不要声称已经完成真实HRS数据统计，除非工具确实返回了数据分析结果。
+- 如果用户只是询问HRS变量是什么、变量名、年份或wave对应关系，只使用搜索和解析工具，不创建工作数据集。
+- 如果用户明确要求提取、处理、筛选、统计或分析HRS数据，在确认真实变量后使用extract_hrs_dataset创建HRS工作数据集。
+- extract_hrs_dataset会自动加入HHIDPN，不需要重复指定HHIDPN。
+- 不得把完整HRS数据返回给模型，只使用工具返回的行数、列名和少量预览理解数据。
+
+工具可以执行真实查询；调用工具后必须依据工具返回结果继续推理，而不是猜测结果。
 你可以在同一轮连续调用多个工具。
-多轮对话中要记住之前已经确认的数据集、列名、用户目标和工具结果。
+多轮对话中要记住之前已经确认的数据集、列名、HRS变量、用户目标和工具结果。
 如果用户使用“它/这个/刚才那个”等指代，要结合会话历史理解。
-如果缺少真实表格数据，不要伪造统计结果，应明确说明缺少数据。
-回答时用中文，简洁说明做了什么、工具返回什么、下一步可以做什么。
+如果缺少真实数据结果，不要伪造统计结果。
+
+回答使用中文，清楚说明找到的变量、年份/wave以及必要的歧义。
 """
 
 class Message(BaseModel):
@@ -47,6 +68,7 @@ class ChatResponse(BaseModel):
     session_id: str
     reply: str
     agent_state: AgentState
+    dataset: Optional[Dict[str, Any]] = None
     profile: Optional[Dict[str, Any]] = None
     process_spec: Optional[Dict[str, Any]] = None
 
@@ -71,6 +93,20 @@ class FixResponse(BaseModel):
 
 app = FastAPI(title="Table Agent Backend")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+def build_hrs_meta(dataset_id: str, profile: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "datasetId": dataset_id,
+        "fileName": "RAND HRS Longitudinal File 2022",
+        "fileSize": 0,
+        "rows": int(profile["statistics"]["totalRows"]),
+        "columns": int(profile["statistics"]["totalColumns"]),
+        "encoding": "internal",
+        "delimiter": "",
+        "hasHeader": True,
+        "fingerprint": dataset_id,
+        "uploadedAt": pd.Timestamp.now().isoformat(),
+    }
 
 def _jsonable(value):
     try: json.dumps(value, ensure_ascii=False); return value
@@ -583,18 +619,36 @@ def build_process_spec_from_state(
 
     return spec
 
+def get_created_hrs_dataset_id(state: AgentState) -> str | None:
+    for call in reversed(state.tool_calls or []):
+        if call.name != "extract_hrs_dataset" or getattr(call, "error", None):
+            continue
+
+        result = call.result or {}
+
+        if isinstance(result, dict):
+            dataset_id = result.get("dataset_id")
+            if dataset_id:
+                return str(dataset_id)
+
+    return None
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
-    answer, state = run_agent_turn(req.session_id,req.message,req.context)
-    dataset_id = (req.context or {}).get("dataset_id")
+    answer, state = run_agent_turn(req.session_id, req.message, req.context)
+
+    hrs_dataset_id = get_created_hrs_dataset_id(state)
+    dataset_id = hrs_dataset_id or (req.context or {}).get("dataset_id")
+
+    profile = _load_profile(dataset_id)
+    dataset = build_hrs_meta(dataset_id, profile) if hrs_dataset_id and profile else None
     process_spec = build_process_spec_from_state(state)
     return {
         "session_id": req.session_id,
         "reply": answer,
         "agent_state": state,
-        # Chat 不提交数据
-        "profile": None,
-        # 返回规划结果
+        "dataset": dataset,
+        "profile": profile if hrs_dataset_id else None,
         "process_spec": process_spec or None,
     }
 

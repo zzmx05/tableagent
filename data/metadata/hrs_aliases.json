@@ -1,0 +1,27 @@
+{
+    "marital status": [
+        "marital",
+        "marriage",
+        "婚姻",
+        "婚姻状态",
+        "婚姻状况"
+    ],
+    "depression": [
+        "depressive symptoms",
+        "depressed",
+        "抑郁",
+        "抑郁症状"
+    ],
+    "cognition": [
+        "cognitive",
+        "cognitive function",
+        "认知",
+        "认知能力"
+    ],
+    "retirement": [
+        "retired",
+        "retire",
+        "退休",
+        "退休状态"
+    ]
+}

@@ -1,5 +1,4 @@
 // 右侧对话助手面板
-
 import { useState } from 'react';
 import { useTableStore } from '@/store/tableStore';
 import { Button } from '@/components/ui/button';
@@ -15,7 +14,7 @@ import { chatWithAgent, previewFromSpec, fixProcess } from '@/lib/api';
 import { executeCurrentProcess } from '@/lib/executeProcess';
 
 export function AssistantPanel() {
-  const {assistantCollapsed, toggleAssistant, messages, addMessage, updateProcessSpec, processSpec, currentProfile, currentDataset, setProcessedPreview,currentRun} = useTableStore();
+  const {assistantCollapsed, toggleAssistant, messages, addMessage, updateProcessSpec, processSpec, currentProfile, currentDataset, setCurrentDataset, setProcessedPreview,currentRun} = useTableStore();
   const [inputMode, setInputMode] = useState<MessageType>('chat');
   const [inputValue, setInputValue] = useState('');
   const [messageFilter, setMessageFilter] = useState<MessageType | 'all'>('all');
@@ -56,6 +55,14 @@ export function AssistantPanel() {
           type: 'chat',
           content: data.reply,
         });
+
+        if (data.dataset && data.profile) {
+          setCurrentDataset(data.dataset, data.profile);
+        
+          toast.success('HRS数据已提取', {
+            description: `已创建工作数据集：${data.dataset.rows} 行 × ${data.dataset.columns} 列`,
+          });
+        }
 
         if (data.process_spec) {
           updateProcessSpec(
@@ -469,7 +476,9 @@ function MessageCard({
             <Copy className="h-3 w-3" />
           </Button>
         </div>
-        <CardTitle className="text-sm">{message.content}</CardTitle>
+        <div className="text-sm">
+          <MarkdownContent content={message.content} />
+        </div>
         <CardDescription className="text-xs">{new Date(message.timestamp).toLocaleString('zh-CN')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -555,4 +564,190 @@ function MessageCard({
       </CardContent>
     </Card>
   );
+}
+
+function MarkdownContent({ content }: { content: string }) {
+  const lines = content.split('\n');
+  const elements: React.ReactNode[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (isTableStart(lines, i)) {
+      const tableLines: string[] = [line];
+      i += 2;
+
+      while (i < lines.length && isTableRow(lines[i])) {
+        tableLines.push(lines[i]);
+        i++;
+      }
+
+      elements.push(<MarkdownTable key={`table-${i}`} lines={tableLines} />);
+      continue;
+    }
+
+    if (line.startsWith('### ')) {
+      elements.push(
+        <h3 key={i} className="text-base font-semibold mt-4 mb-2">
+          {renderInlineMarkdown(line.slice(4))}
+        </h3>
+      );
+      i++;
+      continue;
+    }
+
+    if (line.startsWith('## ')) {
+      elements.push(
+        <h2 key={i} className="text-lg font-semibold mt-4 mb-2">
+          {renderInlineMarkdown(line.slice(3))}
+        </h2>
+      );
+      i++;
+      continue;
+    }
+
+    if (line.startsWith('# ')) {
+      elements.push(
+        <h1 key={i} className="text-xl font-semibold mt-4 mb-2">
+          {renderInlineMarkdown(line.slice(2))}
+        </h1>
+      );
+      i++;
+      continue;
+    }
+
+    if (/^\d+\.\s/.test(line)) {
+      elements.push(
+        <div key={i} className="ml-4 my-1">
+          {renderInlineMarkdown(line)}
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    if (/^[-*]\s/.test(line)) {
+      elements.push(
+        <div key={i} className="ml-4 my-1 flex gap-2">
+          <span>•</span>
+          <span>{renderInlineMarkdown(line.replace(/^[-*]\s/, ''))}</span>
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    if (line.trim() === '---') {
+      elements.push(<hr key={i} className="my-4 border-border" />);
+      i++;
+      continue;
+    }
+
+    if (!line.trim()) {
+      elements.push(<div key={i} className="h-2" />);
+      i++;
+      continue;
+    }
+
+    elements.push(
+      <p key={i} className="my-1 leading-relaxed">
+        {renderInlineMarkdown(line)}
+      </p>
+    );
+
+    i++;
+  }
+
+  return <div className="overflow-hidden">{elements}</div>;
+}
+
+
+function isTableRow(line: string) {
+  const trimmed = line.trim();
+  return trimmed.startsWith('|') && trimmed.endsWith('|');
+}
+
+
+function isTableSeparator(line: string) {
+  if (!isTableRow(line)) return false;
+
+  const cells = parseTableRow(line);
+
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+
+function isTableStart(lines: string[], index: number) {
+  if (index + 1 >= lines.length) return false;
+
+  return isTableRow(lines[index]) && isTableSeparator(lines[index + 1]);
+}
+
+
+function parseTableRow(line: string) {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim());
+}
+
+
+function MarkdownTable({ lines }: { lines: string[] }) {
+  if (lines.length === 0) return null;
+
+  const headers = parseTableRow(lines[0]);
+  const rows = lines.slice(1).map(parseTableRow);
+
+  return (
+    <div className="my-3 overflow-x-auto rounded-md border">
+      <table className="w-full border-collapse text-xs">
+        <thead className="bg-muted">
+          <tr>
+            {headers.map((header, index) => (
+              <th key={index} className="border-b border-r last:border-r-0 px-3 py-2 text-left font-semibold whitespace-nowrap">
+                {renderInlineMarkdown(header)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr key={rowIndex} className="border-b last:border-b-0">
+              {headers.map((_, columnIndex) => (
+                <td key={columnIndex} className="border-r last:border-r-0 px-3 py-2 align-top">
+                  {renderInlineMarkdown(row[columnIndex] ?? '')}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+
+function renderInlineMarkdown(text: string): React.ReactNode[] {
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  const parts = text.split(pattern);
+
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index} className="font-semibold">{part.slice(2, -2)}</strong>;
+    }
+
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return (
+        <code key={index} className="rounded bg-muted px-1 py-0.5 font-mono text-[0.9em]">
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+
+    return <span key={index}>{part}</span>;
+  });
 }
